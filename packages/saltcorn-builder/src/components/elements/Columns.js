@@ -27,7 +27,6 @@ export const Columns = ({ widths, contents, ncols }) => {
     selected,
     connectors: { connect, drag },
   } = useNode((node) => ({ selected: node.events.selected }));
-
   return (
     <div
       className={`row ${selected ? "selected-node" : ""}`}
@@ -49,11 +48,12 @@ export const ColumnsSettings = () => {
     actions: { setProp },
     widths,
     ncols,
+    breakpoint,
   } = useNode((node) => ({
     widths: node.data.props.widths,
     ncols: node.data.props.ncols,
+    breakpoint: node.data.props.breakpoint,
   }));
-  console.log(widths);
   return (
     <div>
       <table>
@@ -110,6 +110,23 @@ export const ColumnsSettings = () => {
               </tr>
             </Fragment>
           ))}{" "}
+          <tr>
+            <td>
+              <label>Breakpoint</label>
+            </td>
+            <td>
+              <select
+                value={breakpoint}
+                onChange={(e) =>
+                  setProp((prop) => (prop.breakpoint = e.target.value))
+                }
+              >
+                <option value="">None</option>
+                <option value="sm">Small</option>
+                <option value="md">Medium</option>
+              </select>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -120,6 +137,7 @@ Columns.craft = {
   defaultProps: {
     widths: [6],
     ncols: 2,
+    breakpoint: "",
   },
   related: {
     settings: ColumnsSettings,

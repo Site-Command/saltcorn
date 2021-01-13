@@ -1,11 +1,11 @@
 const Field = require("../../models/field");
 const File = require("../../models/file");
-const FieldRepeat = require("../../models/fieldrepeat");
 const Table = require("../../models/table");
 const User = require("../../models/user");
 const Form = require("../../models/form");
 const View = require("../../models/view");
 const Workflow = require("../../models/workflow");
+const { getState } = require("../../db/state");
 const { text } = require("@saltcorn/markup/tags");
 const { renderForm } = require("@saltcorn/markup");
 const {
@@ -13,6 +13,7 @@ const {
   calcfldViewOptions,
 } = require("../../plugin-helper");
 const { splitUniques } = require("./viewable_fields");
+
 const configuration_workflow = (req) =>
   new Workflow({
     steps: [
@@ -31,6 +32,25 @@ const configuration_workflow = (req) =>
             "Save",
             //"Delete"
           ];
+          if (table.name === "users") {
+            actions.push("Login");
+            actions.push("Sign up");
+            Object.entries(getState().auth_methods).forEach(([k, v]) => {
+              actions.push(`Login with ${k}`);
+            });
+            fields.push({
+              name: "password",
+              label: "Password",
+              type: "String",
+            });
+            fields.push({
+              name: "remember",
+              label: "Remember me",
+              type: "Bool",
+            });
+            field_view_options.password = ["password"];
+            field_view_options.remember = ["edit"];
+          }
           return {
             fields,
             field_view_options,
@@ -61,9 +81,8 @@ const configuration_workflow = (req) =>
           );
           var formFields = [];
           omitted_fields.forEach((f) => {
-            if (f.presets) {
-              f.required = false;
-            }
+            f.required = false;
+
             formFields.push(f);
             if (f.presets) {
               formFields.push(
@@ -133,7 +152,7 @@ const get_state_fields = async (table_id, viewname, { columns }) => [
   },
 ];
 
-const getForm = async (table, viewname, columns, layout, id) => {
+const getForm = async (table, viewname, columns, layout, id, req) => {
   const fields = await table.getFields();
 
   const tfields = (columns || [])
@@ -143,13 +162,27 @@ const getForm = async (table, viewname, columns, layout, id) => {
         if (f) {
           f.fieldview = column.fieldview;
           return f;
+        } else if (table.name === "users" && column.field_name === "password") {
+          return new Field({
+            name: "password",
+            fieldview: column.fieldview,
+            type: "String",
+          });
+        } else if (table.name === "users" && column.field_name === "remember") {
+          return new Field({
+            name: "remember",
+            fieldview: column.fieldview,
+            type: "Bool",
+          });
         }
       }
     })
     .filter((tf) => !!tf);
-
+  const path = req.baseUrl + req.path;
+  let action = `/view/${viewname}`;
+  if (path && path.startsWith("/auth/")) action = path;
   const form = new Form({
-    action: `/view/${viewname}`,
+    action,
     fields: tfields,
     layout,
   });
@@ -173,7 +206,7 @@ const run = async (table_id, viewname, config, state, { res, req }) => {
   //console.log(JSON.stringify(layout, null,2))
   const table = await Table.findOne({ id: table_id });
   const fields = await table.getFields();
-  const form = await getForm(table, viewname, columns, layout, state.id);
+  const form = await getForm(table, viewname, columns, layout, state.id, req);
   const { uniques, nonUniques } = splitUniques(fields, state);
   if (Object.keys(uniques).length > 0) {
     const row = await table.getRow(uniques);
@@ -211,7 +244,7 @@ const fill_presets = async (table, req, fixed) => {
       if (fixed[k]) {
         const fldnm = k.replace("preset_", "");
         const fld = fields.find((f) => f.name === fldnm);
-        fixed[fldnm] = fld.presets[fixed[k]]({ user: req.user });
+        fixed[fldnm] = fld.presets[fixed[k]]({ user: req.user, req });
       }
       delete fixed[k];
     }
@@ -229,7 +262,7 @@ const runPost = async (
 ) => {
   const table = await Table.findOne({ id: table_id });
   const fields = await table.getFields();
-  const form = await getForm(table, viewname, columns, layout, body.id);
+  const form = await getForm(table, viewname, columns, layout, body.id, req);
   Object.entries(body).forEach(([k, v]) => {
     const form_field = form.fields.find((f) => f.name === k);
     const tbl_field = fields.find((f) => f.name === k);
@@ -317,6 +350,7 @@ const runPost = async (
 
 module.exports = {
   name: "Edit",
+  description: "Form for creating a new row or editing existing rows",
   configuration_workflow,
   run,
   runPost,

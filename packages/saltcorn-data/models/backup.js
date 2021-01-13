@@ -86,7 +86,7 @@ const create_table_jsons = contract(
     await fs.mkdir(dirpath);
     const tables = await Table.find({});
     for (const t of tables) {
-      await create_table_json(t, dirpath);
+      if (t.name !== "users") await create_table_json(t, dirpath);
     }
   }
 );
@@ -203,7 +203,7 @@ const restore_tables = contract(
   is.fun(is.str, is.promise(is.maybe(is.str))),
   async (dirpath) => {
     var err;
-    const tables = await Table.find();
+    const tables = (await Table.find()).filter((t) => t.name !== "users");
     for (const table of tables) {
       const fnm_csv = path.join(dirpath, "tables", table.name + ".csv");
       const fnm_json = path.join(dirpath, "tables", table.name + ".json");
@@ -255,9 +255,9 @@ const restore = contract(
     );
 
     const can_restore = await can_install_pack(pack);
-    if (can_restore.error || can_restore.warning) {
+    if (can_restore.error) {
       return `Cannot restore backup, clashing entities: 
-      ${can_restore.error || ""} ${can_restore.warning || ""}
+      ${can_restore.error || ""}
       Delete these entities or restore to a pristine instance.
       `;
     }

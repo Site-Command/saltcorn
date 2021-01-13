@@ -13,10 +13,27 @@ const {
   settingsDropdown,
   post_dropdown_item,
 } = require("@saltcorn/markup");
-const { isAdmin, setTenant, error_catcher } = require("../routes/utils");
+const {
+  isAdmin,
+  setTenant,
+  error_catcher,
+  csrfField,
+} = require("../routes/utils");
 const { send_reset_email } = require("./resetpw");
 const { getState } = require("@saltcorn/data/db/state");
-const { a, div, button, text, span, code } = require("@saltcorn/markup/tags");
+const {
+  a,
+  div,
+  button,
+  text,
+  span,
+  code,
+  form,
+  option,
+  select,
+  br,
+} = require("@saltcorn/markup/tags");
+const Table = require("@saltcorn/data/models/table");
 const router = new Router();
 module.exports = router;
 
@@ -35,15 +52,12 @@ const userForm = contract(
     const roles = (await User.get_roles()).filter((r) => r.role !== "public");
     roleField.options = roles.map((r) => ({ label: r.role, value: r.id }));
     const can_reset = getState().getConfig("smtp_host", "") !== "";
+    const userTable = await Table.findOne({ name: "users" });
+    const userFields = (await userTable.getFields()).filter(
+      (f) => !f.calculated
+    );
     const form = new Form({
-      fields: [
-        new Field({
-          label: req.__("E-mail"),
-          name: "email",
-          input_type: "text",
-        }),
-        roleField,
-      ],
+      fields: [roleField, ...userFields],
       action: "/useradmin/save",
       submitLabel: user ? req.__("Save") : req.__("Create"),
     });
@@ -87,7 +101,7 @@ const userForm = contract(
   }
 );
 
-const wrap = (req, cardTitle, response, lastBc) => ({
+const wrap = (req, response, lastBc) => ({
   above: [
     {
       type: "breadcrumbs",
@@ -97,13 +111,10 @@ const wrap = (req, cardTitle, response, lastBc) => ({
         ...(lastBc ? [lastBc] : []),
       ],
     },
-    {
-      type: "card",
-      title: cardTitle,
-      contents: response,
-    },
+    ...response,
   ],
 });
+
 const user_dropdown = (user, req, can_reset) =>
   settingsDropdown(`dropdownMenuButton${user.id}`, [
     a(
@@ -147,44 +158,94 @@ const user_dropdown = (user, req, can_reset) =>
       user.email
     ),
   ]);
+const editRoleLayoutForm = (role, layouts, layout_by_role, req) =>
+  form(
+    {
+      action: `/useradmin/setrolelayout/${role.id}`,
+      method: "post",
+    },
+    csrfField(req),
+    select(
+      { name: "layout", onchange: "form.submit()" },
+      layouts.map((layout, ix) =>
+        option(
+          {
+            value: layout,
+            ...((layout_by_role[role.id]
+              ? layout_by_role[role.id] === layout
+              : ix == layouts.length - 1) && { selected: true }),
+          },
+          text(layout)
+        )
+      )
+    )
+  );
 router.get(
   "/",
   setTenant,
   isAdmin,
   error_catcher(async (req, res) => {
-    const users = await User.find();
+    const users = await User.find({}, { orderBy: "id" });
     const roles = await User.get_roles();
     var roleMap = {};
     roles.forEach((r) => {
       roleMap[r.id] = r.role;
     });
+    const layouts = Object.keys(getState().layouts).filter(
+      (l) => l !== "emergency"
+    );
+    const layout_by_role = getState().getConfig("layout_by_role");
     const can_reset = getState().getConfig("smtp_host", "") !== "";
     res.sendWrap(
       req.__("Users"),
-      wrap(req, req.__("Users"), [
-        mkTable(
-          [
-            { label: req.__("ID"), key: "id" },
-            {
-              label: req.__("Email"),
-              key: (r) => link(`/useradmin/${r.id}`, r.email),
-            },
-            {
-              label: "",
-              key: (r) =>
-                r.disabled
-                  ? span({ class: "badge badge-danger" }, "Disabled")
-                  : "",
-            },
-            { label: req.__("Role"), key: (r) => roleMap[r.role_id] },
-            {
-              label: "",
-              key: (r) => user_dropdown(r, req, can_reset),
-            },
+      wrap(req, [
+        {
+          type: "card",
+          title: req.__("Users"),
+          contents: [
+            mkTable(
+              [
+                { label: req.__("ID"), key: "id" },
+                {
+                  label: req.__("Email"),
+                  key: (r) => link(`/useradmin/${r.id}`, r.email),
+                },
+                {
+                  label: "",
+                  key: (r) =>
+                    r.disabled
+                      ? span({ class: "badge badge-danger" }, "Disabled")
+                      : "",
+                },
+                { label: req.__("Role"), key: (r) => roleMap[r.role_id] },
+                {
+                  label: "",
+                  key: (r) => user_dropdown(r, req, can_reset),
+                },
+              ],
+              users
+            ),
+            link(`/useradmin/new`, req.__("Add user")),
           ],
-          users
-        ),
-        link(`/useradmin/new`, req.__("Add user")),
+        },
+        {
+          type: "card",
+          title: req.__("Roles"),
+          contents: [
+            mkTable(
+              [
+                { label: req.__("ID"), key: "id" },
+                { label: req.__("Role"), key: "role" },
+                {
+                  label: req.__("Theme"),
+                  key: (role) =>
+                    editRoleLayoutForm(role, layouts, layout_by_role, req),
+                },
+              ],
+              roles
+            ),
+          ],
+        },
       ])
     );
   })
@@ -198,9 +259,19 @@ router.get(
     const form = await userForm(req);
     res.sendWrap(
       req.__("New user"),
-      wrap(req, req.__("New user"), renderForm(form, req.csrfToken()), {
-        text: req.__("New"),
-      })
+      wrap(
+        req,
+        [
+          {
+            type: "card",
+            title: req.__("Users"),
+            contents: [renderForm(form, req.csrfToken())],
+          },
+        ],
+        {
+          text: req.__("New"),
+        }
+      )
     );
   })
 );
@@ -214,17 +285,43 @@ router.get(
     const user = await User.findOne({ id });
     const form = await userForm(req, user);
 
-    res.sendWrap(
-      req.__("Edit user"),
-      wrap(
-        req,
-        req.__("Edit user %s", user.email),
-        renderForm(form, req.csrfToken()),
+    res.sendWrap(req.__("Edit user"), {
+      above: [
         {
-          text: user.email,
-        }
-      )
-    );
+          type: "breadcrumbs",
+          crumbs: [
+            { text: req.__("Settings") },
+            { text: req.__("Users"), href: "/useradmin" },
+            { text: user.email },
+          ],
+        },
+        {
+          type: "card",
+          title: req.__("Edit user %s", user.email),
+          contents: renderForm(form, req.csrfToken()),
+        },
+        {
+          type: "card",
+          title: req.__("API token"),
+          contents: [
+            div(
+              user.api_token
+                ? span({ class: "mr-1" }, "API token for this user: ") +
+                    code(user.api_token)
+                : req.__("No API token issued")
+            ),
+            div(
+              { class: "mt-4" },
+              post_btn(
+                `/useradmin/gen-api-token/${user.id}`,
+                user.api_token ? "Reset" : "Generate",
+                req.csrfToken()
+              )
+            ),
+          ],
+        },
+      ],
+    });
   })
 );
 
@@ -240,17 +337,24 @@ router.post(
       id,
       rnd_password,
       send_pwreset_email,
+      _csrf,
+      ...rest
     } = req.body;
     if (id) {
       try {
-        await db.update("users", { email, role_id }, id);
+        await db.update("users", { email, role_id, ...rest }, id);
         req.flash("success", req.__(`User %s saved`, email));
       } catch (e) {
         req.flash("error", req.__(`Error editing user: %s`, e.message));
       }
     } else {
-      if (rnd_password) password = generate_password();
-      const u = await User.create({ email, password, role_id: +role_id });
+      if (rnd_password) password = User.generate_password();
+      const u = await User.create({
+        email,
+        password,
+        role_id: +role_id,
+        ...rest,
+      });
       const pwflash =
         rnd_password && !send_pwreset_email
           ? req.__(` with password %s`, code(password))
@@ -276,11 +380,34 @@ router.post(
     res.redirect(`/useradmin`);
   })
 );
-const generate_password = () => {
-  const candidate = is.str.generate().split(" ").join("");
-  if (candidate.length < 10) return generate_password();
-  else return candidate;
-};
+
+router.post(
+  "/gen-api-token/:id",
+  setTenant,
+  isAdmin,
+  error_catcher(async (req, res) => {
+    const { id } = req.params;
+    const u = await User.findOne({ id });
+    await u.getNewAPIToken();
+    req.flash("success", req.__(`New API token generated`));
+
+    res.redirect(`/useradmin/${u.id}`);
+  })
+);
+router.post(
+  "/setrolelayout/:id",
+  setTenant,
+  isAdmin,
+  error_catcher(async (req, res) => {
+    const { id } = req.params;
+    const layout_by_role = getState().getConfig("layout_by_role");
+    layout_by_role[+id] = req.body.layout;
+    await getState().setConfig("layout_by_role", layout_by_role);
+    req.flash("success", req.__(`Saved layout for role`));
+
+    res.redirect(`/useradmin/`);
+  })
+);
 
 router.post(
   "/set-random-password/:id",
@@ -289,7 +416,7 @@ router.post(
   error_catcher(async (req, res) => {
     const { id } = req.params;
     const u = await User.findOne({ id });
-    const newpw = generate_password();
+    const newpw = User.generate_password();
     await u.changePasswordTo(newpw);
     await u.destroy_sessions();
     req.flash(
@@ -335,7 +462,6 @@ router.post(
   error_catcher(async (req, res) => {
     const { id } = req.params;
     const u = await User.findOne({ id });
-    await u.destroy_sessions();
     await u.delete();
     req.flash("success", req.__(`User %s deleted`, u.email));
 

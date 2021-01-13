@@ -1,4 +1,4 @@
-import React, { Fragment, useContext } from "react";
+import React, { Fragment, useContext, useState } from "react";
 import optionsCtx from "../context";
 
 export const blockProps = (is_block) =>
@@ -13,7 +13,7 @@ export const BlockSetting = ({ block, setProp }) => (
       checked={block}
       onChange={(e) => setProp((prop) => (prop.block = e.target.checked))}
     />
-    <label className="form-check-label">Block</label>
+    <label className="form-check-label">Block display</label>
   </div>
 );
 
@@ -117,3 +117,48 @@ export const TextStyleRow = ({ textStyle, setProp }) => {
     </tr>
   );
 };
+
+export const Accordion = ({ titles, children }) => {
+  const [currentTab, setCurrentTab] = useState(0);
+  return (
+    <Fragment>
+      {children.map((child, ix) => {
+        const isCurrent = ix === currentTab;
+        return (
+          <Fragment key={ix}>
+            <div
+              className={`bg-${
+                isCurrent ? "primary" : "secondary"
+              } pl-1 text-white w-100 mt-1`}
+              onClick={() => setCurrentTab(ix)}
+            >
+              <span className="w-1em">{isCurrent ? "⏷" : "⏵"}</span>
+              {child.props.accordiontitle || titles[ix]}
+            </div>
+            {isCurrent ? child : null}
+          </Fragment>
+        );
+      })}
+    </Fragment>
+  );
+};
+export const parseStyles = (styles) =>
+  (styles || "")
+    .split("\n")
+    .join("")
+    .split(";")
+    .filter((style) => style.split(":")[0] && style.split(":")[1])
+    .map((style) => [
+      style
+        .split(":")[0]
+        .trim()
+        .replace(/-./g, (c) => c.substr(1).toUpperCase()),
+      style.split(":")[1].trim(),
+    ])
+    .reduce(
+      (styleObj, style) => ({
+        ...styleObj,
+        [style[0]]: style[1],
+      }),
+      {}
+    );

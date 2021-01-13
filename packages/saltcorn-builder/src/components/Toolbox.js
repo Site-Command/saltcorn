@@ -13,6 +13,7 @@ import { DropDownFilter } from "./elements/DropDownFilter";
 import { ToggleFilter } from "./elements/ToggleFilter";
 import { Empty } from "./elements/Empty";
 import { Card } from "./elements/Card";
+import { Tabs } from "./elements/Tabs";
 import { Container } from "./elements/Container";
 import { Image } from "./elements/Image";
 import { View } from "./elements/View";
@@ -73,6 +74,16 @@ const ColumnsElem = ({ connectors }) => (
     <Columns contents={[]} />
   </WrapElem>
 );
+const TabsElem = ({ connectors }) => (
+  <WrapElem
+    connectors={connectors}
+    icon="fas fa-list-ul"
+    title="Tabbed content"
+    label="Tabs"
+  >
+    <Tabs contents={[]} />
+  </WrapElem>
+);
 const LineBreakElem = ({ connectors }) => (
   <WrapElem
     connectors={connectors}
@@ -101,7 +112,7 @@ const CardElem = ({ connectors }) => (
     icon="far fa-square"
     label="Card"
   >
-    <Element canvas is={Card}></Element>
+    <Element canvas is={Card} isFormula={{}} url=""></Element>
   </WrapElem>
 );
 const ImageElem = ({ connectors, images }) => (
@@ -182,7 +193,12 @@ const DropDownFilterElem = ({ connectors, fields }) => (
     title="Dropdown filter"
     label="Dropdown"
   >
-    <DropDownFilter name={fields[0].name} block={false} />
+    <DropDownFilter
+      name={fields[0].name}
+      block={false}
+      neutral_label={""}
+      full_width={false}
+    />
   </WrapElem>
 );
 const ToggleFilterElem = ({ connectors, fields }) => (
@@ -216,9 +232,12 @@ const ViewLinkElem = ({ connectors, options }) => (
     icons={["fas fa-eye", "fas fa-link"]}
     title="Link to a view"
     label="ViewLink"
+    disable={options.link_view_opts.length === 0}
   >
     <ViewLink
-      name={options.link_view_opts[0].name}
+      name={
+        options.link_view_opts.length > 0 ? options.link_view_opts[0].name : ""
+      }
       block={false}
       minRole={10}
       label={""}
@@ -238,6 +257,10 @@ const ActionElem = ({ connectors, options }) => (
       block={false}
       minRole={10}
       confirm={false}
+      action_label={""}
+      isFormula={{}}
+      rndid={"not_assigned"}
+      configuration={{}}
     />
   </WrapElem>
 );
@@ -292,6 +315,8 @@ export const ToolboxShow = () => {
       />
       <ViewElem connectors={connectors} views={views} />
       <ContainerElem connectors={connectors} />
+      <CardElem connectors={connectors} />
+      <TabsElem connectors={connectors} />
     </Fragment>
   );
 };
@@ -299,7 +324,7 @@ export const ToolboxShow = () => {
 export const ToolboxFilter = () => {
   const { connectors, query } = useEditor();
   const options = useContext(optionsCtx);
-  const { fields } = options;
+  const { fields, views } = options;
   return (
     <Fragment>
       <TextElem connectors={connectors} />
@@ -309,8 +334,11 @@ export const ToolboxFilter = () => {
       <DropDownFilterElem connectors={connectors} fields={fields} />
       <ToggleFilterElem connectors={connectors} fields={fields} />
       <SearchElem connectors={connectors} />
-
+      <ActionElem connectors={connectors} options={options} />
       <ContainerElem connectors={connectors} />
+      <CardElem connectors={connectors} />
+      <TabsElem connectors={connectors} />
+      <ViewElem connectors={connectors} views={views} />
     </Fragment>
   );
 };
@@ -331,6 +359,9 @@ export const ToolboxEdit = () => {
       <LineBreakElem connectors={connectors} />
       <ActionElem connectors={connectors} options={options} />
       <ContainerElem connectors={connectors} />
+      <CardElem connectors={connectors} />
+      <TabsElem connectors={connectors} />
+      <LinkElem connectors={connectors} />
     </Fragment>
   );
 };
@@ -351,6 +382,7 @@ export const ToolboxPage = () => {
       <ViewElem connectors={connectors} views={views} />
       <SearchElem connectors={connectors} />
       <ContainerElem connectors={connectors} />
+      <TabsElem connectors={connectors} />
     </Fragment>
   );
 };

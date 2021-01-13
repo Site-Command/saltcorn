@@ -2,12 +2,13 @@ const View = require("./models/view");
 const Field = require("./models/field");
 const Table = require("./models/table");
 const { getState } = require("./db/state");
+const db = require("./db");
 const { contract, is } = require("contractis");
 const { fieldlike, is_table_query, is_column } = require("./contracts");
 const { link } = require("@saltcorn/markup");
-const { button } = require("@saltcorn/markup/tags");
+const { button, a, label, text } = require("@saltcorn/markup/tags");
 
-const link_view = (url, label, popup) => {
+const link_view = (url, label, popup, link_style = "", link_size = "") => {
   if (popup) {
     return button(
       {
@@ -16,7 +17,16 @@ const link_view = (url, label, popup) => {
       },
       label
     );
-  } else return link(url, label);
+  } else
+    return a(
+      {
+        href: url,
+        ...(link_style || link_size
+          ? { class: `${link_style} ${link_size}` }
+          : {}),
+      },
+      text(label)
+    );
 };
 
 const stateToQueryString = contract(
@@ -66,10 +76,12 @@ const get_link_view_opts = contract(
   ),
   async (table, viewname) => {
     const own_link_views = await View.find_possible_links_to_table(table.id);
-    const link_view_opts = own_link_views.map((v) => ({
-      label: v.name,
-      name: `Own:${v.name}`,
-    }));
+    const link_view_opts = own_link_views
+      .filter((v) => v.name !== viewname)
+      .map((v) => ({
+        label: v.name,
+        name: `Own:${v.name}`,
+      }));
     const child_views = await get_child_views(table, viewname);
     for (const { relation, related_table, views } of child_views) {
       for (const view of views) {
@@ -92,6 +104,12 @@ const get_link_view_opts = contract(
     return link_view_opts;
   }
 );
+
+const getActionConfigFields = async (action, table) =>
+  typeof action.configFields === "function"
+    ? await action.configFields({ table })
+    : action.configFields || [];
+
 const field_picker_fields = contract(
   is.fun(
     is.obj({ table: is.class("Table"), viewname: is.str }),
@@ -103,13 +121,36 @@ const field_picker_fields = contract(
     fields.push(new Field({ name: "id", label: "id", type: "Integer" }));
 
     const boolfields = fields.filter((f) => f.type && f.type.name === "Bool");
-    const actions = ["Delete", ...boolfields.map((f) => `Toggle ${f.name}`)];
+
+    const stateActions = getState().actions;
+
+    const actions = [
+      "Delete",
+      ...boolfields.map((f) => `Toggle ${f.name}`),
+      ...Object.keys(stateActions),
+    ];
+
+    const actionConfigFields = [];
+    for (const [name, action] of Object.entries(stateActions)) {
+      const cfgFields = await getActionConfigFields(action, table);
+
+      for (const field of cfgFields) {
+        actionConfigFields.push({
+          ...field,
+          showIf: {
+            ".action_name": name,
+            ".coltype": "Action",
+            ...(field.showIf || {}),
+          },
+        });
+      }
+    }
     const fldOptions = fields.map((f) => f.name);
     const fldViewOptions = calcfldViewOptions(fields, false);
 
     const link_view_opts = await get_link_view_opts(table, viewname);
 
-    const { parent_field_list } = await table.get_parent_relations();
+    const { parent_field_list } = await table.get_parent_relations(true);
     const {
       child_field_list,
       child_relations,
@@ -145,7 +186,10 @@ const field_picker_fields = contract(
               label: __(`Field in %s table`, table.name),
             },
             { name: "Action", label: __("Action on row") },
-            { name: "ViewLink", label: __("Link to other view") },
+
+            ...(link_view_opts.length > 0
+              ? [{ name: "ViewLink", label: __("Link to other view") }]
+              : []),
             { name: "Link", label: __("Link to anywhere") },
             ...(parent_field_list.length > 0
               ? [{ name: "JoinField", label: __("Join Field") }]
@@ -181,6 +225,7 @@ const field_picker_fields = contract(
         name: "action_name",
         label: __("Action"),
         type: "String",
+        class: "action_name",
         required: true,
         attributes: {
           options: actions.join(),
@@ -194,11 +239,57 @@ const field_picker_fields = contract(
         showIf: { ".coltype": "Action" },
       },
       {
+        name: "action_label_formula",
+        label: __("Action label is a formula?"),
+        type: "Bool",
+        required: false,
+        showIf: { ".coltype": "Action" },
+      },
+      {
+        name: "action_style",
+        label: __("Action Style"),
+        type: "String",
+        required: true,
+        attributes: {
+          options: [
+            { name: "btn-primary", label: "Primary button" },
+            { name: "btn-secondary", label: "Secondary button" },
+            { name: "btn-success", label: "Success button" },
+            { name: "btn-danger", label: "Danger button" },
+            { name: "btn-outline-primary", label: "Primary outline button" },
+            {
+              name: "btn-outline-secondary",
+              label: "Secondary outline button",
+            },
+            { name: "btn-link", label: "Link" },
+          ],
+        },
+
+        showIf: { ".coltype": "Action" },
+      },
+      {
+        name: "action_size",
+        label: __("Button size"),
+        type: "String",
+        required: true,
+        attributes: {
+          options: [
+            { name: "", label: "Standard" },
+            { name: "btn-lg", label: "Large" },
+            { name: "btn-sm", label: "Small" },
+            { name: "btn-block", label: "Block" },
+            { name: "btn-block btn-lg", label: "Large block" },
+          ],
+        },
+        showIf: { ".coltype": "Action" },
+      },
+      {
         name: "confirm",
         label: __("User confirmation?"),
         type: "Bool",
         showIf: { ".coltype": "Action" },
       },
+      ...actionConfigFields,
       {
         name: "view",
         label: __("View"),
@@ -229,6 +320,47 @@ const field_picker_fields = contract(
         label: __("Open in popup modal?"),
         type: "Bool",
         required: false,
+        showIf: { ".coltype": "ViewLink" },
+      },
+      {
+        name: "link_style",
+        label: __("Link Style"),
+        type: "String",
+        required: true,
+        attributes: {
+          options: [
+            { name: "", label: "Link" },
+            { name: "btn btn-primary", label: "Primary button" },
+            { name: "btn btn-secondary", label: "Secondary button" },
+            { name: "btn btn-success", label: "Success button" },
+            { name: "btn btn-danger", label: "Danger button" },
+            {
+              name: "btn btn-outline-primary",
+              label: "Primary outline button",
+            },
+            {
+              name: "btn btn-outline-secondary",
+              label: "Secondary outline button",
+            },
+          ],
+        },
+
+        showIf: { ".coltype": "ViewLink" },
+      },
+      {
+        name: "link_size",
+        label: __("Link size"),
+        type: "String",
+        required: true,
+        attributes: {
+          options: [
+            { name: "", label: "Standard" },
+            { name: "btn-lg", label: "Large" },
+            { name: "btn-sm", label: "Small" },
+            { name: "btn-block", label: "Block" },
+            { name: "btn-block btn-lg", label: "Large block" },
+          ],
+        },
         showIf: { ".coltype": "ViewLink" },
       },
       {
@@ -358,7 +490,7 @@ const get_parent_views = contract(
   async (table, viewname) => {
     var parent_views = [];
     const parentrels = (await table.getFields()).filter(
-      (f) => f.is_fkey && f.type !== "File" && f.reftable_name !== "users"
+      (f) => f.is_fkey && f.type !== "File"
     );
     for (const relation of parentrels) {
       const related_table = await Table.findOne({
@@ -384,20 +516,31 @@ const picked_fields_to_query = contract(
     var aggregations = {};
     (columns || []).forEach((column) => {
       if (column.type === "JoinField") {
-        const [refNm, targetNm] = column.join_field.split(".");
-        //joinFields[targetNm] = { ref: refNm, target: targetNm };
-        joinFields[`${refNm}_${targetNm}`] = { ref: refNm, target: targetNm };
+        const kpath = column.join_field.split(".");
+        if (kpath.length === 2) {
+          const [refNm, targetNm] = kpath;
+          joinFields[`${refNm}_${targetNm}`] = { ref: refNm, target: targetNm };
+        } else {
+          const [refNm, through, targetNm] = kpath;
+          joinFields[`${refNm}_${through}_${targetNm}`] = {
+            ref: refNm,
+            target: targetNm,
+            through,
+          };
+        }
       }
       if (column.type === "ViewLink") {
-        const [vtype, vrest] = column.view.split(":");
-        if (vtype === "ParentShow") {
-          const [pviewnm, ptbl, pfld] = vrest.split(".");
-          const field = fields.find((f) => f.name === pfld);
-          if (field && field.attributes.summary_field)
-            joinFields[`summary_field_${ptbl.toLowerCase()}`] = {
-              ref: pfld,
-              target: field.attributes.summary_field,
-            };
+        if (column.view && column.view.split) {
+          const [vtype, vrest] = column.view.split(":");
+          if (vtype === "ParentShow") {
+            const [pviewnm, ptbl, pfld] = vrest.split(".");
+            const field = fields.find((f) => f.name === pfld);
+            if (field && field.attributes.summary_field)
+              joinFields[`summary_field_${ptbl.toLowerCase()}`] = {
+                ref: pfld,
+                target: field.attributes.summary_field,
+              };
+          }
         }
       } else if (column.type === "Aggregation") {
         //console.log(column)
@@ -417,6 +560,38 @@ const picked_fields_to_query = contract(
   }
 );
 
+const stateFieldsToQuery = contract(
+  is.fun(is.obj(), is.obj()),
+  ({ state, fields, prefix = "" }) => {
+    let q = {};
+    const stateKeys = Object.keys(state);
+    if (state._sortby) {
+      const field = fields.find((f) => f.name === state._sortby);
+      if (field) q.orderBy = state._sortby;
+      if (state._sortdesc) q.orderDesc = true;
+    }
+    if (state._pagesize) q.limit = parseInt(state._pagesize);
+    if (state._pagesize && state._page)
+      q.offset = (parseInt(state._page) - 1) * parseInt(state._pagesize);
+    const latNear = stateKeys.find((k) => k.startsWith("_near_lat_"));
+    const longNear = stateKeys.find((k) => k.startsWith("_near_long_"));
+    if (latNear && longNear) {
+      const latfield = db.sqlsanitize(latNear.replace("_near_lat_", ""));
+      const longfield = db.sqlsanitize(longNear.replace("_near_long_", ""));
+      const lat = parseFloat(state[latNear]);
+      const long = parseFloat(state[longNear]);
+      const cos_lat_2 = Math.pow(Math.cos((lat * Math.PI) / 180), 2);
+      q.orderBy = {
+        sql: `((${prefix}${latfield} - ${lat})*(${prefix}${latfield} - ${lat})) + ((${prefix}${longfield} - ${long})*(${prefix}${longfield} - ${long})*${cos_lat_2})`,
+      };
+    }
+    return q;
+  }
+);
+const addOrCreateList = (container, key, x) => {
+  if (container[key]) container[key].push(x);
+  else container[key] = [x];
+};
 const stateFieldsToWhere = contract(
   is.fun(
     is.obj({
@@ -433,7 +608,13 @@ const stateFieldsToWhere = contract(
         return;
       }
       const field = fields.find((fld) => fld.name == k);
-      if (
+      if (k.startsWith("_fromdate_")) {
+        const datefield = db.sqlsanitize(k.replace("_fromdate_", ""));
+        addOrCreateList(qstate, datefield, { gt: new Date(v), equal: true });
+      } else if (k.startsWith("_todate_")) {
+        const datefield = db.sqlsanitize(k.replace("_todate_", ""));
+        addOrCreateList(qstate, datefield, { lt: new Date(v), equal: true });
+      } else if (
         field &&
         field.type.name === "String" &&
         !(field.attributes && field.attributes.options) &&
@@ -443,6 +624,23 @@ const stateFieldsToWhere = contract(
       } else if (field && field.type.name === "Bool" && state[k] === "?") {
         // omit
       } else if (field || k === "id") qstate[k] = v;
+      else if (k.includes(".")) {
+        const kpath = k.split(".");
+        if (kpath.length === 3) {
+          const [jtNm, jFieldNm, lblField] = kpath;
+          qstate.id = [
+            ...(qstate.id || []),
+            {
+              // where id in (select jFieldNm from jtnm where lblField=v)
+              inSelect: {
+                table: `${db.getTenantSchemaPrefix()}"${db.sqlsanitize(jtNm)}"`,
+                field: db.sqlsanitize(jFieldNm),
+                where: { [db.sqlsanitize(lblField)]: v },
+              },
+            },
+          ];
+        }
+      }
     });
     return qstate;
   }
@@ -603,6 +801,7 @@ module.exports = {
   get_child_views,
   get_parent_views,
   stateFieldsToWhere,
+  stateFieldsToQuery,
   initial_config_all_fields,
   calcfldViewOptions,
   get_link_view_opts,
@@ -611,4 +810,5 @@ module.exports = {
   readStateStrict,
   stateToQueryString,
   link_view,
+  getActionConfigFields,
 };

@@ -3,11 +3,13 @@ const db = require("../db");
 const View = require("./view");
 const User = require("./user");
 const Field = require("./field");
+const Trigger = require("./trigger");
 const { getState } = require("../db/state");
 const fetch = require("node-fetch");
 const { contract, is } = require("contractis");
 const Page = require("./page");
 const { is_pack, is_plugin } = require("../contracts");
+const TableConstraint = require("./table_constraints");
 
 const pack_fun = is.fun(is.str, is.promise(is.obj()));
 
@@ -19,6 +21,8 @@ const table_pack = contract(pack_fun, async (name) => {
     delete o.table_id;
     return o;
   };
+  const triggers = await Trigger.find({ table_id: table.id });
+  const constraints = await TableConstraint.find({ table_id: table.id });
   return {
     name: table.name,
     min_role_read: table.min_role_read,
@@ -26,6 +30,8 @@ const table_pack = contract(pack_fun, async (name) => {
     versioned: table.versioned,
     uuid_ids: table.uuid_ids,
     fields: fields.map((f) => strip_ids(f.toJson)),
+    triggers: triggers.map((tr) => tr.toJson),
+    constraints: constraints.map((c) => c.toJson),
   };
 });
 
@@ -38,9 +44,9 @@ const view_pack = contract(pack_fun, async (name) => {
     viewtemplate: view.viewtemplate,
     configuration: view.configuration,
     min_role: view.min_role,
-    on_root_page: view.on_root_page,
     table: table.name,
     menu_label: view.menu_label,
+    default_render_page: view.default_render_page,
   };
 });
 
@@ -52,6 +58,7 @@ const plugin_pack = contract(pack_fun, async (name) => {
     name: plugin.name,
     source: plugin.source,
     location: plugin.location,
+    configuration: plugin.configuration,
   };
 });
 const page_pack = contract(pack_fun, async (name) => {
@@ -90,7 +97,7 @@ const can_install_pack = contract(
       db.sqlsanitize(t.name.toLowerCase())
     );
     const matchTables = allTables.filter((dbt) =>
-      packTables.some((pt) => pt === dbt)
+      packTables.some((pt) => pt === dbt && pt !== "users")
     );
     const matchViews = allViews.filter((dbt) =>
       (pack.views || []).some((pt) => pt.name === dbt)
@@ -103,7 +110,16 @@ const can_install_pack = contract(
       return {
         error: "Tables already exist: " + matchTables.join(),
       };
-
+    pack.tables.forEach((t) => {
+      if (t.name === "users")
+        t.fields.forEach((f) => {
+          if (f.required) {
+            warns.push(
+              `User field '${f.name}' is required in pack, but there are existing users. You must set a value for each user and then change the field to be required. Got to <a href="/list/users">users table data</a>.`
+            );
+          }
+        });
+    });
     matchViews.forEach((v) => {
       warns.push(`Clashing view ${v}.`);
     });
@@ -132,6 +148,10 @@ const uninstall_pack = contract(
         const fields = await table.getFields();
         for (const field of fields) {
           await field.delete();
+        }
+        const triggers = await Trigger.find({ table_id: table.id });
+        for (const trigger of triggers) {
+          await trigger.delete();
         }
       }
     }
@@ -178,15 +198,36 @@ const install_pack = contract(
       }
     }
     for (const tableSpec of pack.tables) {
-      await Table.create(tableSpec.name, tableSpec);
+      if (tableSpec.name !== "users")
+        await Table.create(tableSpec.name, tableSpec);
     }
     for (const tableSpec of pack.tables) {
       const table = await Table.findOne({ name: tableSpec.name });
-      for (const field of tableSpec.fields)
-        await Field.create({ table, ...field }, bare_tables);
+      const exfields = await table.getFields();
+      for (const field of tableSpec.fields) {
+        const exfield = exfields.find((f) => f.name === field.name);
+        if (!((table.name === "users" && field.name === "email") || exfield)) {
+          if (table.name === "users" && field.required)
+            await Field.create(
+              { table, ...field, required: false },
+              bare_tables
+            );
+          else await Field.create({ table, ...field }, bare_tables);
+        }
+      }
+      for (const trigger of tableSpec.triggers || [])
+        await Trigger.create({ table, ...trigger });
+      for (const constraint of tableSpec.constraints || [])
+        await TableConstraint.create({ table, ...constraint });
     }
     for (const viewSpec of pack.views) {
-      const { table, on_menu, menu_label, ...viewNoTable } = viewSpec;
+      const {
+        table,
+        on_menu,
+        menu_label,
+        on_root_page,
+        ...viewNoTable
+      } = viewSpec;
       const vtable = await Table.findOne({ name: table });
       await View.create({ ...viewNoTable, table_id: vtable.id });
       if (menu_label)
